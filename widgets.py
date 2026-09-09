@@ -62,3 +62,34 @@ class ProfileDetailModal(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-close":
             self.dismiss()
+
+
+class ConfirmDeleteModal(ModalScreen[bool]):
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+c", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, ssid: str) -> None:
+        super().__init__()
+        self.ssid = ssid
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-container"):
+            yield Label(f"Forget Wi-Fi network '{self.ssid}'?", id="confirm-title")
+            yield Label("This will remove saved credentials from Windows.", id="confirm-subtitle")
+            with Horizontal(id="confirm-actions"):
+                yield Button("Delete [Enter]", id="btn-confirm-delete", variant="error")
+                yield Button("Cancel [Esc]", id="btn-cancel-delete", variant="default")
+
+    def on_mount(self) -> None:
+        self.query_one("#btn-confirm-delete", Button).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-confirm-delete":
+            self.dismiss(True)
+        elif event.button.id == "btn-cancel-delete":
+            self.dismiss(False)

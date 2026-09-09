@@ -1,7 +1,7 @@
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -92,56 +92,151 @@ class WifiService:
 
         return key_value_pairs
 
-    def get_profile_detail(self, ssid: str) -> Optional[ProfileDetail]:
+    def delete_profile(self, ssid: str) -> bool:
         if not ssid or not ssid.strip():
-            return None
+            return False
 
         clean_ssid = ssid.strip()
-        output = self._run_command(
-            ["netsh", "wlan", "show", "profile", f"name={clean_ssid}", "key=clear"]
-        )
+        output = self._run_command(["netsh", "wlan", "delete", "profile", f"name={clean_ssid}"])
+        return "deleted" in output.lower() or "dihapus" in output.lower()
+
+    def export_profile(self, ssid: str, folder_path: str = ".") -> Tuple[bool, str]:
+        if not ssid or not ssid.strip():
+            return False, "SSID is empty"
+
+        clean_ssid = ssid.strip()
+        abs_folder = os.path.abspath(folder_path)
+        output = self._run_command([
+            "netsh", "wlan", "export", "profile",
+            f"name={clean_ssid}",
+            f"folder={abs_folder}",
+            "key=clear"
+        ])
+        if "successfully" in output.lower() or "berhasil" in output.lower() or f"{clean_ssid}.xml" in output:
+            return True, f"Saved to {abs_folder}"
+        return False, "Export command failed"
+
+    def get_active_interface(self) -> Dict[str, str]:
+        output = self._run_command(["netsh", "wlan", "show", "interfaces"])
         if not output:
-            return None
+            return {}
 
-        data = {
-            "ssid": clean_ssid,
-            "network_type": "Unknown",
-            "authentication": "Unknown",
-            "cipher": "Unknown",
-            "security_key": "Unknown",
-            "password": "-",
-        }
+        info: Dict[str, str] = {}
+        for line in output.splitlines():
+            trimmed = line.strip()
+            if ":" not in trimmed:
+                continue
+            parts = trimmed.split(":", 1)
+            key = parts[0].strip()
+            val = parts[1].strip()
+            info[key] = val
+        return info
 
-        auth_list = []
-        cipher_list = []
+    def get_nearby_networks(self) -> List[Dict[str, str]]:
+        output = self._run_command(["netsh", "wlan", "show", "networks", "mode=bssid"])
+        if not output:
+            return []
+
+        networks: List[Dict[str, str]] = []
+        current: Optional[Dict[str, str]] = None
 
         for line in output.splitlines():
-            line_str = line.strip()
-            if ":" not in line_str:
+            trimmed = line.strip()
+            if trimmed.startswith("SSID") and ":" in trimmed:
+                if current and current.get("ssid"):
+                    networks.append(current)
+                ssid_val = trimmed.split(":", 1)[1].strip()
+                current = {
+                    "ssid": ssid_val if ssid_val else "<Hidden SSID>",
+                    "auth": "-",
+                    "encryption": "-",
+                    "signal": "-",
+                    "channel": "-",
+                    "band": "-",
+                    "radio": "-",
+                    "bssid": "-",
+                }
+            elif current is not None and ":" in trimmed:
+                parts = trimmed.split(":", 1)
+                k = parts[0].strip().lower()
+                v = parts[1].strip()
+                if "authentication" in k:
+                    current["auth"] = v
+                elif "encryption" in k:
+                    current["encryption"] = v
+                elif "signal" in k:
+                    current["signal"] = v
+                elif "channel" in k:
+                    current["channel"] = v
+                elif "band" in k:
+                    current["band"] = v
+                elif "radio type" in k:
+                    current["radio"] = v
+                elif "bssid" in k:
+                    current["bssid"] = v
+
+        if current and current.get("ssid"):
+            networks.append(current)
+
+        return networks
+
+    def get_driver_info(self) -> List[Tuple[str, str]]:
+        output = self._run_command(["netsh", "wlan", "show", "drivers"])
+        if not output:
+            return []
+
+        details: List[Tuple[str, str]] = []
+        for line in output.splitlines():
+            trimmed = line.strip()
+            if ":" not in trimmed:
                 continue
+            parts = trimmed.split(":", 1)
+            k = parts[0].strip()
+            v = parts[1].strip()
+            if k:
+                details.append((k, v if v else "-"))
+        return details
 
-            parts = line_str.split(":", 1)
-            key = parts[0].strip().lower()
-            val = parts[1].strip()
+    def get_ipv4_configs(self) -> List[Dict[str, str]]:
+        output = self._run_command(["netsh", "interface", "ipv4", "show", "config"])
+        if not output:
+            return []
 
-            if "ssid name" in key:
-                data["ssid"] = val.strip('"')
-            elif "network type" in key or "tipe jaringan" in key:
-                data["network_type"] = val
-            elif "authentication" in key or "autentikasi" in key:
-                if val and val not in auth_list:
-                    auth_list.append(val)
-            elif "cipher" in key:
-                if val and val not in cipher_list:
-                    cipher_list.append(val)
-            elif "security key" in key or "kunci keamanan" in key:
-                data["security_key"] = val
-            elif "key content" in key or "konten kunci" in key:
-                data["password"] = val
+        interfaces: List[Dict[str, str]] = []
+        current: Optional[Dict[str, str]] = None
 
-        if auth_list:
-            data["authentication"] = ", ".join(auth_list)
-        if cipher_list:
-            data["cipher"] = ", ".join(cipher_list)
+        for line in output.splitlines():
+            trimmed = line.strip()
+            if trimmed.startswith("Configuration for interface"):
+                if current and current.get("name"):
+                    interfaces.append(current)
+                name = trimmed.replace("Configuration for interface", "").strip().strip('"')
+                current = {
+                    "name": name,
+                    "dhcp": "-",
+                    "ip": "-",
+                    "subnet": "-",
+                    "gateway": "-",
+                    "dns": "-",
+                }
+            elif current is not None and ":" in trimmed:
+                parts = trimmed.split(":", 1)
+                k = parts[0].strip().lower()
+                v = parts[1].strip()
+                if "dhcp enabled" in k:
+                    current["dhcp"] = v
+                elif "ip address" in k and current["ip"] == "-":
+                    current["ip"] = v
+                elif "subnet" in k:
+                    current["subnet"] = v
+                elif "default gateway" in k:
+                    current["gateway"] = v
+                elif "dns servers" in k:
+                    current["dns"] = v
+            elif current is not None and current["dns"] != "-" and trimmed and ":" not in trimmed:
+                current["dns"] += f", {trimmed}"
 
-        return ProfileDetail(**data)
+        if current and current.get("name"):
+            interfaces.append(current)
+
+        return interfaces
