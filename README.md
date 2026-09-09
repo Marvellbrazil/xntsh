@@ -1,16 +1,25 @@
 # xntsh
 
-minimal textual tui to inspect saved wi-fi profiles and passwords on windows.
+minimal textual tui toolkit to inspect saved wi-fi profiles, monitor active network interfaces, scan nearby access points, and run diagnostics on windows.
 
-built on top of `netsh wlan`, structured with modular separation, input validation, and modal inspection.
+built on top of `netsh`, structured with screen-based navigation, modal dialogs, and decoupled styling.
 
 ## features
 
-- profile discovery: automatically queries and lists saved wlan profiles.
-- live search: filter ssids instantly by typing.
-- pagination: fixed row paging with previous/next controls.
-- modal inspection: press enter on any profile to view cleartext keys and network parameters.
-- safe error handling: silent failover with notifications, zero raw tracebacks leaked.
+- main menu navigation: arrow keys, enter, or quick number keys (1-4) to switch modules.
+- saved profiles manager:
+  - list all saved wi-fi networks with pagination.
+  - instant search filter.
+  - view cleartext password and full profile parameters in modal dialog.
+  - delete/forget network with confirmation modal.
+  - export profile to xml with key=clear.
+- live network & scanner:
+  - active interface card (ssid, signal %, channel, band, rx/tx rate).
+  - nearby wi-fi scan table with bssid, signal %, and security type.
+- hardware & ip diagnostics:
+  - wi-fi driver details and hardware capabilities.
+  - ipv4 address, subnet, gateway, and dns server configurations.
+- error handling: clean notification popups, zero raw tracebacks leaked.
 
 ## requirements
 
@@ -34,24 +43,44 @@ python main.py
 
 ## keybindings
 
+### main menu
+
 | key | action |
 | --- | --- |
-| `enter` / click | open modal with cleartext password and profile data |
-| `/` | focus search input |
-| `left` | previous page |
-| `right` | next page |
-| `r` | refresh profile list |
-| `esc` / `ctrl+c` | close modal |
-| `ctrl+c` | quit app |
+| `up` / `down` | navigate menu options |
+| `enter` | select highlighted option |
+| `1` | open saved profiles manager |
+| `2` | open live network & nearby scanner |
+| `3` | open hardware & ip diagnostics |
+| `4` / `ctrl+c` | quit application |
+
+### sub-screens (common)
+
+| key | action |
+| --- | --- |
+| `esc` / `b` | back to main menu |
+| `r` | refresh / rescan data |
+| `ctrl+c` | quit application |
+
+### saved profiles manager
+
+| key | action |
+| --- | --- |
+| `enter` / click | view cleartext password & full profile modal |
+| `d` | delete / forget selected wi-fi profile |
+| `e` | export selected profile to xml |
+| `/` | focus search bar |
+| `left` / `right` | previous / next page |
 
 ## project structure
 
-- `services.py`: subprocess wrapper around `netsh` without shell execution.
-- `widgets.py`: textual components (search bar, pagination, table, detail modal).
+- `services.py`: subprocess wrapper around `netsh` commands.
+- `widgets.py`: reusable ui components (modals, search bar, pagination).
+- `screens.py`: modular screens (main menu, profiles, live network, diagnostics).
 - `styles.tcss`: decoupled textual stylesheet.
-- `app.py`: application controller, state management, and notification handling.
+- `app.py`: application router and screen stack manager.
 - `main.py`: application entry point.
-- `tests/`: test suite verifying parsers and headless tui flows.
+- `tests/`: test suite verifying parsers and screen transitions.
 
 ## testing
 

@@ -2,7 +2,32 @@ Screen {
     background: $surface;
 }
 
-#main-container {
+#menu-container {
+    align: center middle;
+    height: 1fr;
+    padding: 1 2;
+}
+
+#menu-title {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+}
+
+#menu-subtitle {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#main-options {
+    width: 65;
+    height: auto;
+    border: round $primary;
+}
+
+#profiles-container {
     padding: 1 2;
     height: 1fr;
 }
@@ -77,4 +102,100 @@ ProfileDetailModal {
 
 #btn-close {
     min-width: 20;
+}
+
+ConfirmDeleteModal {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+#confirm-container {
+    width: 60;
+    height: auto;
+    background: $surface;
+    border: thick $error;
+    padding: 1 2;
+}
+
+#confirm-title {
+    text-align: center;
+    text-style: bold;
+    color: $error;
+}
+
+#confirm-subtitle {
+    text-align: center;
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#confirm-actions {
+    height: auto;
+    align: center middle;
+}
+
+#confirm-actions Button {
+    margin: 0 1;
+    min-width: 16;
+}
+
+#live-container {
+    padding: 1 2;
+    height: 1fr;
+}
+
+#active-title {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 0;
+}
+
+#active-card {
+    height: auto;
+    border: round $primary;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#active-status-label {
+    text-style: bold;
+}
+
+#nearby-title {
+    text-style: bold;
+    color: $secondary;
+    margin-bottom: 0;
+}
+
+#nearby-table {
+    height: 1fr;
+    border: round $secondary;
+}
+
+#diag-container {
+    padding: 1 2;
+    height: 1fr;
+}
+
+#driver-title {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 0;
+}
+
+#driver-table {
+    height: 1fr;
+    border: round $primary;
+    margin-bottom: 1;
+}
+
+#ipv4-title {
+    text-style: bold;
+    color: $secondary;
+    margin-bottom: 0;
+}
+
+#ipv4-table {
+    height: 1fr;
+    border: round $secondary;
 }
