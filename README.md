@@ -30,7 +30,7 @@ built on top of `netsh`, structured with screen-based navigation, modal dialogs,
 ## installation
 
 ```bash
-git clone https://github.com/vscple/xntsh.git
+git clone https://github.com/Marvellbrazil/xntsh.git
 cd xntsh
 pip install -r requirements.txt
 ```
