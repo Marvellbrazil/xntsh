@@ -1,0 +1,80 @@
+Screen {
+    background: $surface;
+}
+
+#main-container {
+    padding: 1 2;
+    height: 1fr;
+}
+
+SearchBar {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#search-input {
+    width: 100%;
+    border: tall $accent;
+}
+
+#table-container {
+    height: 1fr;
+    border: round $primary;
+    padding: 0 1;
+}
+
+#profiles-table {
+    height: 1fr;
+}
+
+PaginationBar {
+    height: 3;
+    align: center middle;
+    margin-top: 1;
+}
+
+PaginationBar Button {
+    margin: 0 1;
+    min-width: 14;
+}
+
+#page-label {
+    content-align: center middle;
+    text-style: bold;
+    width: 30;
+}
+
+ProfileDetailModal {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+#dialog-container {
+    width: 85%;
+    height: 85%;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+#modal-title {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+}
+
+#modal-table {
+    height: 1fr;
+    border: solid $secondary;
+    margin-bottom: 1;
+}
+
+#modal-actions {
+    height: auto;
+    align: center middle;
+}
+
+#btn-close {
+    min-width: 20;
+}
