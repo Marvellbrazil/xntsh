@@ -5,10 +5,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Input, Label, OptionList, Static
+from textual.widgets import DataTable, Footer, Header, Input, Label, LoadingIndicator, OptionList, Static
 from textual.widgets.option_list import Option
+from textual.worker import Worker, WorkerState
 
-from services import WifiService
+from services import SpeedtestResult, WifiService
 from widgets import (
     ConfirmDeleteModal,
     PaginationBar,
@@ -23,7 +24,8 @@ class MainMenuScreen(Screen):
         Binding("1", "select_profiles", "Profiles", show=False),
         Binding("2", "select_live", "Live", show=False),
         Binding("3", "select_diag", "Diag", show=False),
-        Binding("4", "exit_app", "Exit", show=False),
+        Binding("4", "select_speedtest", "Speedtest", show=False),
+        Binding("5", "exit_app", "Exit", show=False),
         Binding("q", "exit_app", "Quit", show=False),
         Binding("ctrl+c", "exit_app", "Quit", show=True),
     ]
@@ -32,12 +34,13 @@ class MainMenuScreen(Screen):
         yield Header(show_clock=True)
         with Vertical(id="menu-container"):
             yield Label("xntsh - Wi-Fi & Network Toolkit", id="menu-title")
-            yield Label("Select a module using arrows & Enter, or press number keys 1-4", id="menu-subtitle")
+            yield Label("Select a module using arrows & Enter, or press number keys 1-5", id="menu-subtitle")
             yield OptionList(
                 Option("1. Saved Wi-Fi Profiles (Passwords, Delete, Export)", id="menu_profiles"),
                 Option("2. Live Network & Nearby Scanner", id="menu_live"),
                 Option("3. Hardware & IP Diagnostics", id="menu_diag"),
-                Option("4. Exit", id="menu_exit"),
+                Option("4. Speedtest (Download / Upload)", id="menu_speedtest"),
+                Option("5. Exit", id="menu_exit"),
                 id="main-options",
             )
         yield Footer()
@@ -53,6 +56,8 @@ class MainMenuScreen(Screen):
             self.action_select_live()
         elif opt_id == "menu_diag":
             self.action_select_diag()
+        elif opt_id == "menu_speedtest":
+            self.action_select_speedtest()
         elif opt_id == "menu_exit":
             self.action_exit_app()
 
@@ -64,6 +69,9 @@ class MainMenuScreen(Screen):
 
     def action_select_diag(self) -> None:
         self.app.push_screen(DiagnosticsScreen())
+
+    def action_select_speedtest(self) -> None:
+        self.app.push_screen(SpeedtestScreen())
 
     def action_exit_app(self) -> None:
         self.app.exit()
@@ -389,6 +397,181 @@ class DiagnosticsScreen(Screen):
             self.notify("Diagnostics data loaded", severity="information")
         except Exception:
             self.notify("Failed to load network diagnostics", severity="error")
+
+    def action_go_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_exit_app(self) -> None:
+        self.app.exit()
+
+
+class SpeedtestScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "go_back", "Back to Menu", show=True),
+        Binding("b", "go_back", "Back to Menu", show=False),
+        Binding("enter", "start_test", "Run Speedtest", show=True, priority=True),
+        Binding("r", "start_test", "Re-run", show=False, priority=True),
+        Binding("ctrl+c", "exit_app", "Quit", show=True),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.service = WifiService()
+        self.results: List[SpeedtestResult] = []
+        self._test_in_progress = False
+        self._speedtest_worker: Optional[Worker[Optional[SpeedtestResult]]] = None
+        self._speedtest_timer = None
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Vertical(id="speedtest-container"):
+            yield Label("Speedtest", id="speedtest-title")
+            yield Label("Press Enter to start a speedtest", id="speedtest-status")
+            yield LoadingIndicator(id="speedtest-loader")
+            yield Label("Summary", id="summary-title")
+            yield DataTable(id="summary-table")
+            yield Label("History (this session)", id="history-title")
+            yield DataTable(id="history-table")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        loader = self.query_one("#speedtest-loader", LoadingIndicator)
+        loader.display = False
+
+        summary = self.query_one("#summary-table", DataTable)
+        summary.cursor_type = "row"
+        summary.add_column("Metric", key="metric", width=12)
+        summary.add_column("Download (Mbps)", key="dl", width=18)
+        summary.add_column("Upload (Mbps)", key="ul", width=18)
+        summary.add_column("Ping (ms)", key="ping", width=12)
+        summary.add_row("Latest", "-", "-", "-", key="row_latest")
+        summary.add_row("Highest", "-", "-", "-", key="row_highest")
+        summary.add_row("Lowest", "-", "-", "-", key="row_lowest")
+        summary.add_row("Average", "-", "-", "-", key="row_average")
+
+        history = self.query_one("#history-table", DataTable)
+        history.cursor_type = "row"
+        history.add_column("No.", key="h_no", width=6)
+        history.add_column("Time", key="h_time", width=12)
+        history.add_column("Download (Mbps)", key="h_dl", width=18)
+        history.add_column("Upload (Mbps)", key="h_ul", width=18)
+        history.add_column("Ping (ms)", key="h_ping", width=12)
+        history.add_column("Server", key="h_srv")
+
+    def action_start_test(self) -> None:
+        if self._test_in_progress:
+            self.notify("Speedtest already running, please wait...", severity="warning")
+            return
+
+        self._test_in_progress = True
+        status = self.query_one("#speedtest-status", Label)
+        status.update("Running native speedtest... please wait")
+        loader = self.query_one("#speedtest-loader", LoadingIndicator)
+        loader.display = True
+
+        if self._speedtest_timer is not None:
+            self._speedtest_timer.stop()
+        self._speedtest_timer = self.set_timer(20, self._handle_speedtest_timeout)
+
+        self._speedtest_worker = self.run_worker(
+            self._do_speedtest,
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _handle_speedtest_timeout(self) -> None:
+        if not self._test_in_progress:
+            return
+        if self._speedtest_worker is not None:
+            self._speedtest_worker.cancel()
+        self._test_in_progress = False
+        self.query_one("#speedtest-loader", LoadingIndicator).display = False
+        self.query_one("#speedtest-status", Label).update(
+            "Speedtest timed out. Press Enter to retry."
+        )
+        self.notify("Speedtest timed out after 20 seconds", severity="error")
+
+    def _do_speedtest(self) -> Optional[SpeedtestResult]:
+        return self.service.run_speedtest()
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker is not self._speedtest_worker:
+            return
+
+        if self._speedtest_timer is not None:
+            self._speedtest_timer.stop()
+            self._speedtest_timer = None
+
+        if event.state == WorkerState.SUCCESS:
+            result = event.worker.result
+            self._test_in_progress = False
+            loader = self.query_one("#speedtest-loader", LoadingIndicator)
+            loader.display = False
+
+            if result is None:
+                status = self.query_one("#speedtest-status", Label)
+                status.update("Speedtest failed. Press Enter to retry.")
+                self.notify("Could not connect to speedtest server", severity="error")
+                return
+
+            self.results.append(result)
+            self._update_summary()
+            self._update_history()
+
+            status = self.query_one("#speedtest-status", Label)
+            status.update(f"Complete: {result.download_mbps} Mbps down / {result.upload_mbps} Mbps up / {result.ping_ms} ms ping")
+            self.notify("Speedtest finished", severity="information")
+
+        elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
+            self._test_in_progress = False
+            loader = self.query_one("#speedtest-loader", LoadingIndicator)
+            loader.display = False
+            status = self.query_one("#speedtest-status", Label)
+            status.update("Speedtest failed. Press Enter to retry.")
+            message = "Speedtest was cancelled" if event.state == WorkerState.CANCELLED else "Speedtest encountered an error"
+            self.notify(message, severity="error")
+
+    def _update_summary(self) -> None:
+        if not self.results:
+            return
+
+        table = self.query_one("#summary-table", DataTable)
+        latest = self.results[-1]
+
+        dl_vals = [r.download_mbps for r in self.results]
+        ul_vals = [r.upload_mbps for r in self.results]
+        ping_vals = [r.ping_ms for r in self.results]
+
+        table.update_cell("row_latest", "dl", str(latest.download_mbps))
+        table.update_cell("row_latest", "ul", str(latest.upload_mbps))
+        table.update_cell("row_latest", "ping", str(latest.ping_ms))
+
+        table.update_cell("row_highest", "dl", str(max(dl_vals)))
+        table.update_cell("row_highest", "ul", str(max(ul_vals)))
+        table.update_cell("row_highest", "ping", str(min(ping_vals)))
+
+        table.update_cell("row_lowest", "dl", str(min(dl_vals)))
+        table.update_cell("row_lowest", "ul", str(min(ul_vals)))
+        table.update_cell("row_lowest", "ping", str(max(ping_vals)))
+
+        count = len(self.results)
+        table.update_cell("row_average", "dl", str(round(sum(dl_vals) / count, 2)))
+        table.update_cell("row_average", "ul", str(round(sum(ul_vals) / count, 2)))
+        table.update_cell("row_average", "ping", str(round(sum(ping_vals) / count, 2)))
+
+    def _update_history(self) -> None:
+        table = self.query_one("#history-table", DataTable)
+        table.clear()
+        for idx, r in enumerate(self.results):
+            table.add_row(
+                str(idx + 1),
+                r.timestamp,
+                str(r.download_mbps),
+                str(r.upload_mbps),
+                str(r.ping_ms),
+                r.server,
+            )
 
     def action_go_back(self) -> None:
         self.app.pop_screen()

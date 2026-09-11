@@ -1,6 +1,10 @@
 import os
 import subprocess
-from dataclasses import dataclass
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 
@@ -12,6 +16,15 @@ class ProfileDetail:
     cipher: str
     security_key: str
     password: str
+
+
+@dataclass
+class SpeedtestResult:
+    download_mbps: float
+    upload_mbps: float
+    ping_ms: float
+    server: str
+    timestamp: str = field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
 
 
 class WifiService:
@@ -240,3 +253,38 @@ class WifiService:
             interfaces.append(current)
 
         return interfaces
+
+    @staticmethod
+    def run_speedtest() -> Optional[SpeedtestResult]:
+        headers = {"User-Agent": "xntsh-speedtest"}
+        try:
+            t0 = time.perf_counter()
+            req_ping = urllib.request.Request("https://speed.cloudflare.com/__down?bytes=0", headers=headers)
+            with urllib.request.urlopen(req_ping, timeout=6) as resp:
+                _ = resp.read()
+            ping_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+            dl_bytes = 10 * 1024 * 1024
+            t0 = time.perf_counter()
+            req_dl = urllib.request.Request(f"https://speed.cloudflare.com/__down?bytes={dl_bytes}", headers=headers)
+            with urllib.request.urlopen(req_dl, timeout=12) as resp:
+                data = resp.read()
+            dt_dl = time.perf_counter() - t0
+            dl_mbps = round((len(data) * 8) / (dt_dl * 1_000_000), 2) if dt_dl > 0 else 0.0
+
+            ul_data = b"0" * (2 * 1024 * 1024)
+            t0 = time.perf_counter()
+            req_ul = urllib.request.Request("https://speed.cloudflare.com/__up", data=ul_data, headers=headers, method="POST")
+            with urllib.request.urlopen(req_ul, timeout=12) as resp:
+                _ = resp.read()
+            dt_ul = time.perf_counter() - t0
+            ul_mbps = round((len(ul_data) * 8) / (dt_ul * 1_000_000), 2) if dt_ul > 0 else 0.0
+
+            return SpeedtestResult(
+                download_mbps=dl_mbps,
+                upload_mbps=ul_mbps,
+                ping_ms=ping_ms,
+                server="Cloudflare Edge CDN",
+            )
+        except Exception:
+            return None
