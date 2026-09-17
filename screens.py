@@ -1,3 +1,4 @@
+import asyncio
 import math
 from typing import Dict, List, Optional
 
@@ -409,24 +410,27 @@ class SpeedtestScreen(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back to Menu", show=True),
         Binding("b", "go_back", "Back to Menu", show=False),
-        Binding("enter", "start_test", "Run Speedtest", show=True, priority=True),
+        Binding("enter", "start_test", "Run (5x)", show=True, priority=True),
         Binding("r", "start_test", "Re-run", show=False, priority=True),
+        Binding("s", "stop_test", "Stop", show=True, priority=True),
         Binding("ctrl+c", "exit_app", "Quit", show=True),
     ]
+
+    TOTAL_ITERATIONS: int = 5
 
     def __init__(self) -> None:
         super().__init__()
         self.service = WifiService()
         self.results: List[SpeedtestResult] = []
         self._test_in_progress = False
-        self._speedtest_worker: Optional[Worker[Optional[SpeedtestResult]]] = None
-        self._speedtest_timer = None
+        self._stop_requested = False
+        self._speedtest_worker: Optional[Worker] = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="speedtest-container"):
             yield Label("Speedtest", id="speedtest-title")
-            yield Label("Press Enter to start a speedtest", id="speedtest-status")
+            yield Label(f"Press Enter to start speedtest ({self.TOTAL_ITERATIONS} iterations) | Press 's' to stop", id="speedtest-status")
             yield LoadingIndicator(id="speedtest-loader")
             yield Label("Summary", id="summary-title")
             yield DataTable(id="summary-table")
@@ -464,73 +468,101 @@ class SpeedtestScreen(Screen):
             return
 
         self._test_in_progress = True
+        self._stop_requested = False
         status = self.query_one("#speedtest-status", Label)
-        status.update("Running native speedtest... please wait")
+        status.update(f"Starting batch speedtest (1/{self.TOTAL_ITERATIONS})...")
         loader = self.query_one("#speedtest-loader", LoadingIndicator)
         loader.display = True
 
-        if self._speedtest_timer is not None:
-            self._speedtest_timer.stop()
-        self._speedtest_timer = self.set_timer(20, self._handle_speedtest_timeout)
-
         self._speedtest_worker = self.run_worker(
-            self._do_speedtest,
-            thread=True,
+            self._run_batch_speedtest,
             exclusive=True,
             exit_on_error=False,
         )
 
-    def _handle_speedtest_timeout(self) -> None:
+    def action_stop_test(self) -> None:
         if not self._test_in_progress:
+            self.notify("No speedtest currently running", severity="warning")
             return
+
+        self._stop_requested = True
         if self._speedtest_worker is not None:
             self._speedtest_worker.cancel()
         self._test_in_progress = False
         self.query_one("#speedtest-loader", LoadingIndicator).display = False
-        self.query_one("#speedtest-status", Label).update(
-            "Speedtest timed out. Press Enter to retry."
-        )
-        self.notify("Speedtest timed out after 20 seconds", severity="error")
+        status = self.query_one("#speedtest-status", Label)
+        status.update(f"Speedtest stopped ({len(self.results)} runs recorded). Press Enter to start.")
+        self.notify("Speedtest stopped by user", severity="warning")
 
-    def _do_speedtest(self) -> Optional[SpeedtestResult]:
-        return self.service.run_speedtest()
+    async def _run_batch_speedtest(self) -> None:
+        status = self.query_one("#speedtest-status", Label)
+        loader = self.query_one("#speedtest-loader", LoadingIndicator)
+        completed_count = 0
+
+        for i in range(1, self.TOTAL_ITERATIONS + 1):
+            if self._stop_requested:
+                break
+
+            status.update(f"Running speedtest iteration {i}/{self.TOTAL_ITERATIONS}... [Press 's' to stop]")
+
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(self.service.run_speedtest),
+                    timeout=25.0,
+                )
+            except asyncio.CancelledError:
+                break
+            except asyncio.TimeoutError:
+                self.notify(f"Iteration {i}/{self.TOTAL_ITERATIONS} timed out", severity="error")
+                result = None
+            except Exception:
+                result = None
+
+            if self._stop_requested:
+                break
+
+            if result is not None:
+                self.results.append(result)
+                completed_count += 1
+                self._update_summary()
+                self._update_history()
+                status.update(
+                    f"Iteration {i}/{self.TOTAL_ITERATIONS} complete: "
+                    f"{result.download_mbps} Mbps down / {result.upload_mbps} Mbps up / {result.ping_ms} ms ping"
+                )
+            else:
+                status.update(f"Iteration {i}/{self.TOTAL_ITERATIONS} failed.")
+                self.notify(f"Iteration {i}/{self.TOTAL_ITERATIONS} failed to connect", severity="error")
+
+            if i < self.TOTAL_ITERATIONS and not self._stop_requested:
+                try:
+                    await asyncio.sleep(0.5)
+                except asyncio.CancelledError:
+                    break
+
+        loader.display = False
+        self._test_in_progress = False
+
+        if self._stop_requested:
+            status.update(f"Speedtest stopped ({completed_count} iterations completed). Press Enter to re-run.")
+            self.notify(f"Speedtest stopped after {completed_count} runs", severity="warning")
+        elif completed_count == self.TOTAL_ITERATIONS:
+            status.update(f"Batch completed ({completed_count}/{self.TOTAL_ITERATIONS}). Press Enter to re-run.")
+            self.notify(f"Batch speedtest completed ({completed_count} runs)", severity="information")
+        else:
+            status.update(f"Batch finished with {completed_count}/{self.TOTAL_ITERATIONS} successful runs. Press Enter to re-run.")
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker is not self._speedtest_worker:
             return
 
-        if self._speedtest_timer is not None:
-            self._speedtest_timer.stop()
-            self._speedtest_timer = None
-
-        if event.state == WorkerState.SUCCESS:
-            result = event.worker.result
+        if event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
             self._test_in_progress = False
-            loader = self.query_one("#speedtest-loader", LoadingIndicator)
-            loader.display = False
-
-            if result is None:
+            self.query_one("#speedtest-loader", LoadingIndicator).display = False
+            if event.state == WorkerState.ERROR:
                 status = self.query_one("#speedtest-status", Label)
-                status.update("Speedtest failed. Press Enter to retry.")
-                self.notify("Could not connect to speedtest server", severity="error")
-                return
-
-            self.results.append(result)
-            self._update_summary()
-            self._update_history()
-
-            status = self.query_one("#speedtest-status", Label)
-            status.update(f"Complete: {result.download_mbps} Mbps down / {result.upload_mbps} Mbps up / {result.ping_ms} ms ping")
-            self.notify("Speedtest finished", severity="information")
-
-        elif event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
-            self._test_in_progress = False
-            loader = self.query_one("#speedtest-loader", LoadingIndicator)
-            loader.display = False
-            status = self.query_one("#speedtest-status", Label)
-            status.update("Speedtest failed. Press Enter to retry.")
-            message = "Speedtest was cancelled" if event.state == WorkerState.CANCELLED else "Speedtest encountered an error"
-            self.notify(message, severity="error")
+                status.update("Speedtest encountered an error. Press Enter to retry.")
+                self.notify("Speedtest encountered an error", severity="error")
 
     def _update_summary(self) -> None:
         if not self.results:

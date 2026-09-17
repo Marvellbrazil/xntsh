@@ -21,10 +21,11 @@ built on top of `netsh` and native python stdlib, structured with screen-based n
   - ipv4 address, subnet, gateway, and dns server configurations.
 - speedtest:
   - native download, upload, and ping measurement using https edge endpoints.
+  - sequential batch execution (5 iterations) with real-time per-iteration progress.
   - zero external dependencies (pure stdlib).
   - summary table: latest, highest, lowest, and average across session runs.
   - full history table with timestamp, speed values, and server used.
-  - non-blocking async execution with loading indicator.
+  - non-blocking async execution with loading indicator and early stop support.
 - error handling: clean notification popups, zero raw tracebacks leaked.
 
 ## requirements
@@ -83,8 +84,9 @@ python main.py
 
 | key | action |
 | --- | --- |
-| `enter` | start or re-run speedtest |
-| `r` | re-run speedtest |
+| `enter` | start sequential 5x speedtest batch |
+| `r` | re-run speedtest batch |
+| `s` | stop speedtest batch early |
 
 ## project structure
 
