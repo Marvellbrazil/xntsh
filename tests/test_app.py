@@ -83,8 +83,18 @@ async def test_multi_menu_flow():
         await pilot.pause()
 
         assert app.screen._test_in_progress is False
-        assert history.row_count == 1
+        assert history.row_count == 5
         assert summary.get_cell("row_latest", "dl") == "80.0"
+        assert summary.get_cell("row_highest", "dl") == "80.0"
+        assert summary.get_cell("row_average", "dl") == "80.0"
+
+        # Test stop early flow
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen._test_in_progress is True
+        await pilot.press("s")
+        await pilot.pause()
+        assert app.screen._test_in_progress is False
 
         await pilot.press("escape")
         await pilot.pause()
